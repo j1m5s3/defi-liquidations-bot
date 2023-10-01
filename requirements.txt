@@ -1,0 +1,8 @@
+web3~=6.8.0
+requests~=2.31.0
+python-dotenv~=1.0.0
+pymongo
+py-solc-x
+retrying~=1.3.4
+tqdm
+hexbytes~=0.3.1
