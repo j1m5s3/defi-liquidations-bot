@@ -18,7 +18,9 @@ class ContractInterfaceBase:
 
         self.logger = Logger(section_name=__name__)
 
-        with open(f"{os.getcwd()}/sol/contracts/abi/erc20_abi.json", "r") as f:
+        cur_dir = os.path.dirname(__file__)
+        abi_file_path = os.path.join(cur_dir, 'contracts/abi/erc20_abi.json')
+        with open(abi_file_path, "r") as f:
             self.erc_20_abi = json.load(f)
 
         self.erc20_max_approved = []

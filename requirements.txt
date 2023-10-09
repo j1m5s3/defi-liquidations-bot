@@ -6,3 +6,5 @@ py-solc-x
 retrying~=1.3.4
 tqdm
 hexbytes~=0.3.1
+marshmallow~=3.10.0
+pandas~=1.2.3
