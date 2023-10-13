@@ -16,6 +16,9 @@ from sol.ui_pool_data_contract_interface import UIPoolDataContractInterface
 from sol.oracle_contract_interface import OracleContractInterface
 
 from bots.searcher import Searcher
+from bots.data_manager import DataManager
+
+from bots.queues.queues import DATA_MANAGER_QUEUE, LIQUIDATIONS_QUEUE
 
 config = dotenv_values(dotenv_path=find_dotenv())
 logger = Logger(section_name=__file__)
@@ -74,5 +77,9 @@ searcher = Searcher(
     lending_pool_interfaces=lending_pool_interfaces,
     ui_pool_data_interfaces=ui_pool_data_interfaces,
     oracle_interface=oracle_contract_interface,
-    mongo_interface=db_interface
+    mongo_interface=db_interface,
+    data_manager_queue=DATA_MANAGER_QUEUE,
+    liquidations_queue=LIQUIDATIONS_QUEUE
 )
+
+data_manager = DataManager(db_interface=db_interface, data_manager_queue=DATA_MANAGER_QUEUE)

@@ -1,6 +1,7 @@
 import pandas
 from typing import Dict
 from dotenv import dotenv_values, find_dotenv
+from queue import Queue
 
 from app_logger.logger import Logger
 from db.mongo_db_interface import MongoInterface
@@ -24,11 +25,8 @@ CLOSE_FACTOR_HF_THRESHOLD = 0.95
 
 class Searcher:
     """
-    Searcher is a class that is responsible for searching for positions on lending protocols and updating the database
-
-    :param lending_pool_interfaces: A dictionary of lending pool interfaces
-    :param ui_pool_data_interfaces: A dictionary of UI pool data interfaces
-    :param mongo_interface: A mongo interface
+    Searcher is a class that is responsible for searching for positions on lending protocols and pushing data to the
+    DataManager and the Liquidator.
     """
 
     def __init__(
@@ -36,12 +34,26 @@ class Searcher:
             lending_pool_interfaces: Dict[str, LendingPoolContractInterface],
             ui_pool_data_interfaces: Dict[str, UIPoolDataContractInterface],
             oracle_interface: OracleContractInterface,
-            mongo_interface: MongoInterface
+            mongo_interface: MongoInterface,
+            data_manager_queue: Queue,
+            liquidations_queue: Queue
     ):
+        """
+        Initialize the Searcher class
+
+        :param lending_pool_interfaces: A dictionary of lending pool interfaces
+        :param ui_pool_data_interfaces: A dictionary of UI pool data interfaces
+        :param oracle_interface: An oracle interface
+        :param mongo_interface: A mongo interface
+        :param data_manager_queue: A queue shared with the DataManager (data_manager.py)
+        :param liquidations_queue: A queue shared with the Liquidator (liquidator.py)
+        """
         self.lending_pool_interfaces = lending_pool_interfaces
         self.ui_pool_data_interfaces = ui_pool_data_interfaces
         self.oracle_interface = oracle_interface
         self.mongo_interface = mongo_interface
+        self.data_manager_queue = data_manager_queue
+        self.liquidations_queue = liquidations_queue
 
         logger_section_name = f"{__class__}"
         self.logger = Logger(section_name=logger_section_name)
@@ -105,6 +117,9 @@ class Searcher:
 
         df = pandas.DataFrame.from_records(user_account_data_list)
         df = df.drop_duplicates(subset=['account_address', 'protocol_name'], keep='last')
+
+        # Push the account data to the data manager
+        self.data_manager_queue.put(df)
 
         return df
 
@@ -272,6 +287,10 @@ class Searcher:
                         "protocol_name": protocol_name
                     }
                     liquidation_params.append(liquidation_param)
+
+                    # Put new entry into the queue
+                    self.liquidations_queue.put(liquidation_param)
+                    self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
                 elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:
                     debt_to_cover = debt_asset['debt'] * collateral_close_factor
                     liquidation_param = {
@@ -283,6 +302,10 @@ class Searcher:
                         "protocol_name": protocol_name
                     }
                     liquidation_params.append(liquidation_param)
+
+                    # Put new entry into the queue
+                    self.liquidations_queue.put(liquidation_param)
+                    self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
 
         liquidation_params_pd = pandas.DataFrame.from_records(liquidation_params)
         return liquidation_params_pd
