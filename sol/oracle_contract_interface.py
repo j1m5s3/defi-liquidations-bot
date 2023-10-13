@@ -7,7 +7,9 @@ from .contract_interface_base import ContractInterfaceBase
 class OracleContractInterface(ContractInterfaceBase):
     def __init__(self, address: str, provider, protocol_name: str):
         cur_dir = os.path.dirname(__file__)
-        abi_file_path = os.path.join(cur_dir, f'contracts/abi/{protocol_name}_ORACLE.json')
+        abi_file_path = os.path.join(
+            cur_dir, f'contracts/abi/lending_protocols/{protocol_name}_ORACLE.json'
+        )
         with open(abi_file_path) as abi_json:
             abi = json.load(abi_json)
 
@@ -24,7 +26,7 @@ class OracleContractInterface(ContractInterfaceBase):
         return asset_price
 
     def get_asset_price_usd(self, asset_address: str):
-        contract_function_handle = self.contract_handle.functions.getAssetPriceUsd(asset_address)
+        contract_function_handle = self.contract_handle.functions.getAssetPrice(asset_address)
 
         self.logger.info(f"Calling contract function: {contract_function_handle}")
 

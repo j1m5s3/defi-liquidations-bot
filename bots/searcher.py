@@ -6,7 +6,7 @@ from app_logger.logger import Logger
 from db.mongo_db_interface import MongoInterface
 from db.schemas.position_schema import UserAccountDataViewSchema, ReserveDataViewSchema, \
     UserAccountReservesDataViewSchema
-from enums.enums import LendingProtocol, LendingPoolAddresses, LendingPoolUIDataContract, LendingPoolAddressesProvider
+from enums.enums import SearchTypes
 from sol.provider.provider import Provider
 from sol.lending_pool_contract_interface import LendingPoolContractInterface
 from sol.ui_pool_data_contract_interface import UIPoolDataContractInterface
@@ -62,15 +62,31 @@ class Searcher:
         """
         return self.lending_pool_interfaces[protocol_name].recent_borrowers
 
-    def get_user_account_data_from_recent_borrowers(self, protocol_name: str) -> pandas.DataFrame:
+    def get_user_account_data_from_protocol(
+            self,
+            protocol_name: str,
+            search_type: SearchTypes
+    ) -> pandas.DataFrame:
         """
         Get user account data from a lending protocol
+
         :param protocol_name:
+        :param search_type:
         :return:
         """
+
+        if search_type == SearchTypes.RECENT_BORROWS:
+            # Refresh the borrows data
+            self.lending_pool_interfaces[protocol_name].refresh_contract_data()
+            accounts = self.lending_pool_interfaces[protocol_name].recent_borrowers
+        elif search_type == SearchTypes.FROM_RECORDS:
+            accounts = self.get_user_account_positions_from_mongo(protocol_name).to_records()
+        else:
+            raise ValueError(f"Invalid search type: {search_type}")
+
         user_account_data_list = []
-        for recent_borrower in self.lending_pool_interfaces[protocol_name].recent_borrowers:
-            account_address = recent_borrower['account_address']
+        for account in accounts:
+            account_address = account['account_address']
             account_data = self.lending_pool_interfaces[protocol_name].get_user_account_data(account_address)
 
             user_account_data = UserAccountDataViewSchema().load({
@@ -83,7 +99,7 @@ class Searcher:
                 "health_factor": account_data[5],
                 "protocol_name": protocol_name
             })
-            self.logger.info(f"User account data: {user_account_data}")
+            self.logger.info(f"User account data - {search_type.name}: {user_account_data}")
 
             user_account_data_list.append(user_account_data)
 
@@ -92,15 +108,29 @@ class Searcher:
 
         return df
 
-    def get_user_reserve_data_from_recent_borrowers(self, protocol_name: str) -> pandas.DataFrame:
+    def get_user_reserve_data_from_protocol(
+            self,
+            protocol_name: str,
+            search_type: SearchTypes
+    ) -> pandas.DataFrame:
         """
         Get user reserve data from a lending protocol
+
         :param protocol_name:
+        :param search_type:
         :return:
         """
+
+        if search_type == SearchTypes.RECENT_BORROWS:
+            accounts = self.lending_pool_interfaces[protocol_name].recent_borrowers
+        elif search_type == SearchTypes.FROM_RECORDS:
+            accounts = self.get_user_account_positions_from_mongo(protocol_name).to_records()
+        else:
+            raise ValueError(f"Invalid search type: {search_type}")
+
         user_reserve_data_list = []
-        for recent_borrower in self.lending_pool_interfaces[protocol_name].recent_borrowers:
-            account_address = recent_borrower['account_address']
+        for account in accounts:
+            account_address = account['account_address']
             reserve_data = self.ui_pool_data_interfaces[protocol_name].get_user_reserves_data(account_address)[0]
 
             account_reserves = []
@@ -114,7 +144,7 @@ class Searcher:
                     "principal_stable_debt": reserve[5],
                     "stable_borrow_last_update_timestamp": reserve[6]
                 }
-                self.logger.info(f"User reserve data: {user_reserve_data}")
+                self.logger.info(f"User reserve data - {search_type.name}: {user_reserve_data}")
 
                 account_reserves.append(user_reserve_data)
 
@@ -130,13 +160,13 @@ class Searcher:
 
         return df
 
-    def insert_updated_recent_borrow_data(self, protocol_name: str):
+    def insert_updated_account_data(self, protocol_name: str):
         """
         Insert updated recent borrow data into the database
         :param protocol_name:
         :return:
         """
-        df = self.get_user_account_data_from_recent_borrowers(protocol_name)
+        df = self.get_user_account_data_from_protocol(protocol_name, SearchTypes.FROM_RECORDS)
         self.mongo_interface.insert_many('user_account_positions', df.to_dict('records'))
 
     def get_user_account_positions_from_mongo(self, protocol_name: str) -> pandas.DataFrame:
@@ -147,9 +177,7 @@ class Searcher:
         """
         records = self.mongo_interface.find(collection='user_account_positions', query={'protocol_name': protocol_name})
 
-        records_list = []
-        for record in records:
-            records_list.append(record)
+        records_list = list(records)
 
         df = pandas.DataFrame.from_records(records_list)
         return df
@@ -157,16 +185,22 @@ class Searcher:
     def check_for_liquidations(
             self,
             protocol_name: str,
-            hf_threshold: float = 1.50,
-            collateral_threshold: float = 1.00
-    ):
+            search_type: SearchTypes = SearchTypes.RECENT_BORROWS,
+            hf_threshold: float = 1.80,
+            collateral_threshold: float = 1.00,
+    ) -> pandas.DataFrame:
         """
         Check for liquidations
-        :param protocol_name:
-        :return:
+
+        :param protocol_name: Protocol name to check for liquidations
+        :param collateral_threshold: Amount of collateral to check for liquidations
+        :param hf_threshold: Health factor threshold to check for liquidations
+        :param search_type: Type of search to perform
+        :return: Dataframe of positions available for liquidation
         """
-        df_user_accounts: pandas.DataFrame = self.get_user_account_data_from_recent_borrowers(protocol_name)
-        df_user_reserves: pandas.DataFrame = self.get_user_reserve_data_from_recent_borrowers(protocol_name)
+
+        df_user_accounts: pandas.DataFrame = self.get_user_account_data_from_protocol(protocol_name, search_type)
+        df_user_reserves: pandas.DataFrame = self.get_user_reserve_data_from_protocol(protocol_name, search_type)
 
         df = df_user_accounts.merge(
             df_user_reserves,
@@ -174,9 +208,11 @@ class Searcher:
             how='inner'
         )
 
-        liquidation_avail_positions = df[
-            (df['health_factor'] < hf_threshold) & (df['total_collateral_eth'] > collateral_threshold)
-            ]
+        # liquidation_avail_positions = df[
+        #     (df['health_factor'] < hf_threshold) & (df['total_collateral_eth'] > collateral_threshold)
+        #     ]
+
+        liquidation_avail_positions = df[(df['health_factor'] < hf_threshold)]
 
         if liquidation_avail_positions.empty:
             logger.info("No positions available for liquidation")
@@ -185,9 +221,74 @@ class Searcher:
 
         return liquidation_avail_positions
 
+    def to_liquidation_params(self, user_account_data: pandas.DataFrame) -> pandas.DataFrame:
+        """
+        Apply liquidation parameters to user account data
+
+        :param user_account_data:
+        :return:
+        """
+        liquidation_params = []
+
+        account_address = user_account_data['account_address']
+        protocol_name = user_account_data['protocol_name']
+
+        user_reserve_data = user_account_data['reserves']
+        if user_account_data['health_factor'] < CLOSE_FACTOR_HF_THRESHOLD:
+            collateral_close_factor = MAX_LIQUIDATION_PERCENT
+        else:
+            collateral_close_factor = DEFAULT_LIQUIDATION_PERCENT
+
+        collateral_assets = []
+        deb_assets = []
+        for reserve in user_reserve_data:
+            if reserve['usage_as_collateral_enabled'] is True:
+                collateral_assets.append({
+                    "asset": reserve['underlying_asset'], "supplied": reserve['scaled_a_token_balance']
+                })
+            if reserve['scaled_variable_debt'] > 0 or reserve['principal_stable_debt'] > 0:
+                debt = reserve['scaled_variable_debt'] + reserve['principal_stable_debt']
+                deb_assets.append(
+                    {
+                        "asset": reserve['underlying_asset'],
+                        "debt": debt
+                    }
+                )
+
+        for collateral_asset in collateral_assets:
+            collateral_price_usd = self.oracle_interface.get_asset_price_usd(collateral_asset['asset'])
+            collateral_value_usd = collateral_asset['supplied'] * collateral_price_usd
+            for debt_asset in deb_assets:
+                debt_price_usd = self.oracle_interface.get_asset_price_usd(debt_asset['asset'])
+                debt_value_usd = debt_asset['debt'] * debt_price_usd
+                if collateral_asset['asset'] == debt_asset['asset']:
+                    debt_to_cover = debt_asset['debt'] * collateral_close_factor
+                    liquidation_param = {
+                        "collateral_asset": collateral_asset['asset'],
+                        "debt_asset": debt_asset['asset'],
+                        "user": account_address,
+                        "debt_to_cover": debt_to_cover,
+                        "receive_a_token": False,
+                        "protocol_name": protocol_name
+                    }
+                    liquidation_params.append(liquidation_param)
+                elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:
+                    debt_to_cover = debt_asset['debt'] * collateral_close_factor
+                    liquidation_param = {
+                        "collateral_asset": collateral_asset['asset'],
+                        "debt_asset": debt_asset['asset'],
+                        "user": account_address,
+                        "debt_to_cover": debt_to_cover,
+                        "receive_a_token": False,
+                        "protocol_name": protocol_name
+                    }
+                    liquidation_params.append(liquidation_param)
+
+        liquidation_params_pd = pandas.DataFrame.from_records(liquidation_params)
+        return liquidation_params_pd
+
     def create_liquidation_params(
             self,
-            protocol_name: str,
             positions: pandas.DataFrame
     ) -> pandas.DataFrame:
         """
@@ -199,151 +300,35 @@ class Searcher:
             - uint256 debtToCover, --> debt_to_cover
             - bool receiveAToken --> false
 
-        :param protocol_name: Name of the protocol (ex. AAVE_ARBITRUM)
         :param positions: Dataframe of user positions to create the liquidation params from
         :return: Dataframe of containing liquidation params
         """
-        liquidation_params = []
-        account_addresses = positions['account_address'].tolist()
-        for account_address in account_addresses:
-            user_account_data = positions[
-                (positions['account_address'] == account_address) &
-                (positions['protocol_name'] == protocol_name)
-                ]
-            user_reserve_data = user_account_data['reserves']
-            if user_account_data['health_factor'] < CLOSE_FACTOR_HF_THRESHOLD:
-                collateral_close_factor = MAX_LIQUIDATION_PERCENT
-            else:
-                collateral_close_factor = DEFAULT_LIQUIDATION_PERCENT
 
-            collateral_assets = []
-            deb_assets = []
-            for reserve in user_reserve_data:
-                if reserve['usage_as_collateral_enabled'] is True:
-                    collateral_assets.append({
-                        "asset": reserve['underlying_asset'], "supplied": reserve['scaled_a_token_balance']
-                    })
-                if reserve['scaled_variable_debt'] > 0 or reserve['principal_stable_debt'] > 0:
-                    debt = reserve['scaled_variable_debt'] + reserve['principal_stable_debt']
-                    deb_assets.append(
-                        {
-                            "asset": reserve['underlying_asset'],
-                            "debt": debt
-                        }
-                    )
+        liquidation_params = positions.apply(
+            self.to_liquidation_params, axis=1
+        )
+        liquidation_params_df = pandas.concat(liquidation_params.to_list())
 
-            for collateral_asset in collateral_assets:
-                for debt_asset in deb_assets:
-                    collateral_price_usd = self.oracle_interface.get_asset_price_usd(collateral_asset['asset'])
-                    collateral_value_usd = collateral_asset['supplied'] * collateral_price_usd
+        return liquidation_params_df
 
-                    debt_price_usd = self.oracle_interface.get_asset_price_usd(debt_asset['asset'])
-                    debt_value_usd = debt_asset['debt'] * debt_price_usd
-                    if collateral_asset['asset'] == debt_asset['asset']:
-                        debt_to_cover = debt_asset['debt'] * collateral_close_factor
-                        liquidation_param = {
-                            "collateral_asset": collateral_asset['asset'],
-                            "debt_asset": debt_asset['asset'],
-                            "user": account_address,
-                            "debt_to_cover": debt_to_cover,
-                            "receive_a_token": False,
-                            "protocol_name": protocol_name
-                        }
-                        liquidation_params.append(liquidation_param)
-                    elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:
-                        debt_to_cover = debt_asset['debt'] * collateral_close_factor
-                        liquidation_param = {
-                            "collateral_asset": collateral_asset['asset'],
-                            "debt_asset": debt_asset['asset'],
-                            "user": account_address,
-                            "debt_to_cover": debt_to_cover,
-                            "receive_a_token": False,
-                            "protocol_name": protocol_name
-                        }
-                        liquidation_params.append(liquidation_param)
-
-        liquidation_params_pd = pandas.DataFrame.from_records(liquidation_params)
-        return liquidation_params_pd
-
-    def live_search(self, protocol_name: str):
+    def live_search(
+            self,
+            protocol_name: str,
+            search_type: SearchTypes
+    ) -> pandas.DataFrame:
         """
-        Live search for liquidations
-        :param protocol_name:
-        :return:
+        Live search for liquidations return parameters for liquidations
+
+        :param protocol_name: Name of the protocol to search for liquidations on
+        :param search_type: Type of search to perform
+        :return: Dataframe of liquidation params
         """
-        liquidation_avail_positions_df = self.check_for_liquidations(protocol_name)
-        liquidation_params_df = self.create_liquidation_params(protocol_name, liquidation_avail_positions_df)
+        self.logger.info(f"Searching for liquidations on {protocol_name} or search type {search_type.name}")
 
-        df = liquidation_avail_positions_df.merge(
-            liquidation_params_df,
-            on=['account_address', 'protocol_name'],
-            how='inner'
-        )
+        liquidation_avail_positions_df = self.check_for_liquidations(protocol_name, search_type)
+        liquidation_params_df = self.create_liquidation_params(liquidation_avail_positions_df)
 
-        return df
+        return liquidation_params_df
 
 
-def test_searcher():
-    try:
-        provider = Provider(
-            wallet_address=config["WALLET_ADDRESS"],
-            wallet_private_key=config["WALLET_PRIVATE_KEY"],
-            https_url=None,
-            ws_url=config["ALCHEMY_WSS_RPC_URL_ARBITRUM"]
-        )
-        logger.info("Provider initialized")
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        logger.critical("Failed to initialize provider")
-        raise
 
-    db_interface = MongoInterface(
-        db_name=config["MONGO_DB_NAME"],
-        connection_url=config["MONGO_CONNECTION_URL"]
-    )
-
-    lending_pool_interfaces = {
-        LendingPoolAddresses.AAVE_ARBITRUM.name: LendingPoolContractInterface(
-            address=LendingPoolAddresses.AAVE_ARBITRUM.value,
-            provider=provider,
-            protocol_name=LendingProtocol.AAVE_ARBITRUM.name
-        ),
-        LendingPoolAddresses.RADIANT_ARBITRUM.name: LendingPoolContractInterface(
-            address=LendingPoolAddresses.RADIANT_ARBITRUM.value,
-            provider=provider,
-            protocol_name=LendingProtocol.RADIANT_ARBITRUM.name
-        )
-    }
-
-    ui_pool_data_interfaces = {
-        LendingPoolUIDataContract.AAVE_ARBITRUM.name: UIPoolDataContractInterface(
-            address=LendingPoolUIDataContract.AAVE_ARBITRUM.value,
-            provider=provider,
-            protocol_name=LendingPoolUIDataContract.AAVE_ARBITRUM.name
-        ),
-        LendingPoolUIDataContract.RADIANT_ARBITRUM.name: UIPoolDataContractInterface(
-            address=LendingPoolUIDataContract.RADIANT_ARBITRUM.value,
-            provider=provider,
-            protocol_name=LendingPoolUIDataContract.RADIANT_ARBITRUM.name
-        )
-    }
-
-    oracle_contract_interface = OracleContractInterface(
-        address=config['AAVE_ARBITRUM_ORACLE_CONTRACT_ADDRESS'],
-        provider=provider,
-        protocol_name=LendingProtocol.AAVE_ARBITRUM.name
-    )
-
-    searcher = Searcher(
-        lending_pool_interfaces=lending_pool_interfaces,
-        ui_pool_data_interfaces=ui_pool_data_interfaces,
-        oracle_interface=oracle_contract_interface,
-        mongo_interface=db_interface
-    )
-
-    searcher.check_for_liquidations(LendingPoolAddressesProvider.AAVE_ARBITRUM.name)
-    searcher.check_for_liquidations(LendingPoolAddressesProvider.RADIANT_ARBITRUM.name)
-
-
-if __name__ == "__main__":
-    test_searcher()
