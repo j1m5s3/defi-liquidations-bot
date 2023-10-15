@@ -12,6 +12,7 @@ import "./sol_lib/uniswap/contracts/libraries/SqrtPriceMath.sol";
 // AAVE Core
 import "./sol_lib/aave/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
 import "./sol_lib/aave/contracts/interfaces/IPoolAddressesProvider.sol";
+import "./sol_lib/aave/contracts/interfaces/IPool.sol";
 
 // ERC20 token interface
 //import "./sol_lib/aave/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
@@ -35,14 +36,18 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         owner = payable(msg.sender);
     }
 
-    // AAVE
+    // AAVE_ARBITRUM
     address public flashLoanInitiator;
+    address public AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
+    address public RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM = 0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1;
+    IPool public constant aavePool = IPool(AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM);
+    IPool public constant radiantPool = IPool(RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM);
 
     // Uniswap Arbitrum
-    address public constant uniswapRouterAddress = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
-    address public constant uinswapQuoterAddress = 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6;
-    ISwapRouter public constant uniswapRouter = ISwapRouter(uniswapRouterAddress);
-    IQuoter public constant uniswapQuoter = IQuoter(uinswapQuoterAddress);
+    address public constant UNISWAP_ROUTER_ADDRESS = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address public constant UNISWAP_QUOTER_ADDRESS = 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6;
+    ISwapRouter public constant uniswapRouter = ISwapRouter(UNISWAP_ROUTER_ADDRESS);
+    IQuoter public constant uniswapQuoter = IQuoter(UNISWAP_QUOTER_ADDRESS);
 
     event Arbitrage(bytes path, uint256 amountIn, bool isArbitrage);
     event Swap(bytes path, uint256 amountIn, uint256 amountOut);
@@ -66,7 +71,7 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         flashLoanInitiator = initiator;
 
         require(IERC20(asset).balanceOf(address(this)) >= amount, "RECEIVED_LOANED_AMOUNT_INSUFFICIENT");
-        crossDexTriArbitrageSwaps(params);
+        liquidatePosition(params);
 
         uint256 amountOwed = amount + premium;
         require(IERC20(asset).balanceOf(address(this)) >= amountOwed, "NOT_ENOUGH_FUNDS_TO_PAY_BACK_LOAN");
@@ -80,39 +85,11 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         return true;
     }
 
-    function crossDexTriArbitrageSwaps(bytes memory params) internal returns(bool){
-        bytes memory swap1;
-        bytes memory swap2;
-        bytes memory swap3;
-        bool swap1_success = false;
-        bool swap2_success = false;
-        bool swap3_success = false;
-
-        (swap1, swap2, swap3) = abi.decode(params, (bytes, bytes, bytes));
-
-        swap1_success = exactInputDexSwap(swap1);
-        require(swap1_success == true, "swap1 failed");
-        swap2_success = exactInputDexSwap(swap2);
-        require(swap2_success == true, "swap2 failed");
-        swap3_success = exactInputDexSwap(swap3);
-        require(swap3_success == true, "swap3 failed");
-
-        return true;
-    }
-
-    function flashLoanTriArbitrageCrossDex(
+    function flashLoanLiquidate(
         address token0,
         uint256 loanAmount,
-        bytes calldata swap1,
-        bytes calldata swap2,
-        bytes calldata swap3
+        bytes calldata liquidateParams
     ) external onlyOwner {
-
-        bytes memory params = abi.encode(
-            swap1,
-            swap2,
-            swap3
-        );
 
         uint16 referralCode = 0;
         POOL.flashLoanSimple(
@@ -122,6 +99,55 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
             params,
             referralCode
         );
+    }
+
+    function liquidatePosition(bytes calldata liquidateParams) external onlyOwner {
+        address collateralAsset;
+        address debtAsset;
+        address user;
+        uint256 debtToCover;
+        bool receiveAToken;
+        strimg memory protocol;
+
+        (
+            collateralAsset,
+            debtAsset,
+            user,
+            debtToCover,
+            receiveAToken
+        ) = abi.decode(liquidateParams, (address, address, address, uint256, bool));
+
+
+        if (protocol == "AAVE_ARBITRUM") {
+            IERC20(debtAsset).approve(address(AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM), debtToCover);
+
+            aavePool.liquidationCall(
+                collateralAsset,
+                debtAsset,
+                user,
+                debtToCover,
+                receiveAToken
+            );
+
+        } else if (protocol == "RADIANT_ARBITRUM") {
+            IERC20(debtAsset).approve(RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM, debtToCover);
+
+            radiantPool.liquidationCall(
+                collateralAsset,
+                debtAsset,
+                user,
+                debtToCover,
+                receiveAToken
+            );
+
+            IERC20(collateralAsset).approve(RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM, IERC20(collateralAsset).balanceOf(address(this)));
+
+
+        } else {
+            revert("INVALID_PROTOCOL");
+        }
+
+
     }
 
     ISwapRouter.ExactInputSingleParams public routerParamsExactInput;
@@ -201,42 +227,6 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         return true;
     }
 
-
-    // Get Square Root Price from Input amount
-    function getSqrtPriceLimitFromInput(
-        uint160 sqrtPriceX96,
-        uint128 liquidity,
-        uint256 amountIn,
-        bool zeroForOne
-    ) public view returns (uint160 sqrtPriceLimitX96) {
-
-        sqrtPriceLimitX96 = SqrtPriceMath.getNextSqrtPriceFromInput(
-            sqrtPriceX96,
-            liquidity,
-            amountIn,
-            zeroForOne
-        );
-
-        return sqrtPriceLimitX96;
-    }
-
-    // Get Square Root Price from Output amount
-    function getSqrtPriceLimitFromOutput(
-        uint160 sqrtPriceX96,
-        uint128 liquidity,
-        uint256 amountOut,
-        bool zeroForOne
-    ) public view returns (uint160 sqrtPriceLimitX96) {
-
-        sqrtPriceLimitX96 = SqrtPriceMath.getNextSqrtPriceFromOutput(
-            sqrtPriceX96,
-            liquidity,
-            amountOut,
-            zeroForOne
-        );
-
-        return sqrtPriceLimitX96;
-    }
 
     //function getArbitrageOpportunity (int index)
     function getTokenBalance(address token, address holder) public view returns(uint256) {

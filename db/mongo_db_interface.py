@@ -28,6 +28,9 @@ class MongoInterface:
     def update(self, collection, query, document):
         return self.db[collection].update_one(query, document)
 
+    def update_many(self, collection, query, document):
+        return self.db[collection].update_many(query, document)
+
     def delete(self, collection, query):
         return self.db[collection].delete_one(query)
 
