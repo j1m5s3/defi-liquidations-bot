@@ -4,10 +4,9 @@ pragma abicoder v2;
 
 // Custom implementations
 //import "./sol_lib/UniswapOperations.sol";
+
 // Uniswap
 import "./sol_lib/uniswap/contracts/interfaces/ISwapRouter.sol";
-import "./sol_lib/uniswap/contracts/interfaces/IQuoter.sol";
-import "./sol_lib/uniswap/contracts/libraries/SqrtPriceMath.sol";
 
 // AAVE Core
 import "./sol_lib/aave/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
@@ -17,19 +16,23 @@ import "./sol_lib/aave/contracts/interfaces/IPool.sol";
 // ERC20 token interface
 //import "./sol_lib/aave/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
 interface IERC20 {
-	function totalSupply() external view returns (uint);
-	function balanceOf(address account) external view returns (uint);
-	function transfer(address recipient, uint amount) external returns (bool);
-	function allowance(address owner, address spender) external view returns (uint);
-	function approve(address spender, uint amount) external returns (bool);
-	function transferFrom(address sender, address recipient, uint amount) external returns (bool);
-	event Transfer(address indexed from, address indexed to, uint value);
-	event Approval(address indexed owner, address indexed spender, uint value);
+    function totalSupply() external view returns (uint);
+
+    function balanceOf(address account) external view returns (uint);
+
+    function transfer(address recipient, uint amount) external returns (bool);
+
+    function allowance(address owner, address spender) external view returns (uint);
+
+    function approve(address spender, uint amount) external returns (bool);
+
+    function transferFrom(address sender, address recipient, uint amount) external returns (bool);
+
+    event Transfer(address indexed from, address indexed to, uint value);
+    event Approval(address indexed owner, address indexed spender, uint value);
 }
 
-contract FlashArb is FlashLoanSimpleReceiverBase {
-
-    //UniswapOperations uniswapOperations = new UniswapOperations();
+contract FlashLiquidate is FlashLoanSimpleReceiverBase {
 
     address payable owner;
     constructor(address _addressProvider) FlashLoanSimpleReceiverBase(IPoolAddressesProvider(_addressProvider)) {
@@ -40,14 +43,14 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
     address public flashLoanInitiator;
     address public AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
     address public RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM = 0xF4B1486DD74D07706052A33d31d7c0AAFD0659E1;
-    IPool public constant aavePool = IPool(AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM);
-    IPool public constant radiantPool = IPool(RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM);
+    IPool public aavePool = IPool(AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM);
+    IPool public radiantPool = IPool(RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM);
 
     // Uniswap Arbitrum
     address public constant UNISWAP_ROUTER_ADDRESS = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
-    address public constant UNISWAP_QUOTER_ADDRESS = 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6;
+    //address public constant UNISWAP_QUOTER_ADDRESS = 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6;
     ISwapRouter public constant uniswapRouter = ISwapRouter(UNISWAP_ROUTER_ADDRESS);
-    IQuoter public constant uniswapQuoter = IQuoter(UNISWAP_QUOTER_ADDRESS);
+    //IQuoter public constant uniswapQuoter = IQuoter(UNISWAP_QUOTER_ADDRESS);
 
     event Arbitrage(bytes path, uint256 amountIn, bool isArbitrage);
     event Swap(bytes path, uint256 amountIn, uint256 amountOut);
@@ -68,16 +71,44 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         address initiator,
         bytes calldata params
     ) external override returns (bool) {
+        uint256 amountOwed = amount + premium;
+
+        address collateralAsset;
+        address debtAsset;
+        address user;
+        uint256 debtToCover;
+        bool receiveAToken;
+        uint8 protocol;
+
         flashLoanInitiator = initiator;
 
-        require(IERC20(asset).balanceOf(address(this)) >= amount, "RECEIVED_LOANED_AMOUNT_INSUFFICIENT");
-        liquidatePosition(params);
+        (
+        collateralAsset,
+        debtAsset,
+        user,
+        debtToCover,
+        receiveAToken,
+        protocol
+        ) = abi.decode(params, (address, address, address, uint256, bool, uint8));
 
-        uint256 amountOwed = amount + premium;
+        require(IERC20(asset).balanceOf(address(this)) >= amount, "RECEIVED_LOANED_AMOUNT_INSUFFICIENT");
+        liquidatePosition(
+            collateralAsset,
+            debtAsset,
+            user,
+            debtToCover,
+            receiveAToken,
+            protocol
+        );
+
+        exactInputSwap(
+            collateralAsset,
+            asset,
+            debtToCover
+        );
         require(IERC20(asset).balanceOf(address(this)) >= amountOwed, "NOT_ENOUGH_FUNDS_TO_PAY_BACK_LOAN");
 
         IERC20(asset).approve(address(POOL), amountOwed);
-
         uint256 tokenBalance = IERC20(asset).balanceOf(address(this)) - amountOwed;
 
         emit FlashLoanResult(amount, amountOwed, tokenBalance);
@@ -96,29 +127,20 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
             address(this),
             token0,
             loanAmount,
-            params,
+            liquidateParams,
             referralCode
         );
     }
 
-    function liquidatePosition(bytes calldata liquidateParams) external onlyOwner {
-        address collateralAsset;
-        address debtAsset;
-        address user;
-        uint256 debtToCover;
-        bool receiveAToken;
-        strimg memory protocol;
+    function liquidatePosition(address collateralAsset,
+        address debtAsset,
+        address user,
+        uint256 debtToCover,
+        bool receiveAToken,
+        uint8 protocol
+    ) internal onlyOwner {
 
-        (
-            collateralAsset,
-            debtAsset,
-            user,
-            debtToCover,
-            receiveAToken
-        ) = abi.decode(liquidateParams, (address, address, address, uint256, bool));
-
-
-        if (protocol == "AAVE_ARBITRUM") {
+        if (protocol == 1) {
             IERC20(debtAsset).approve(address(AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM), debtToCover);
 
             aavePool.liquidationCall(
@@ -128,8 +150,7 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
                 debtToCover,
                 receiveAToken
             );
-
-        } else if (protocol == "RADIANT_ARBITRUM") {
+        } else if (protocol == 3) {
             IERC20(debtAsset).approve(RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM, debtToCover);
 
             radiantPool.liquidationCall(
@@ -139,10 +160,6 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
                 debtToCover,
                 receiveAToken
             );
-
-            IERC20(collateralAsset).approve(RADIANT_POOL_CONTRACT_ADDRESS_ARBITRUM, IERC20(collateralAsset).balanceOf(address(this)));
-
-
         } else {
             revert("INVALID_PROTOCOL");
         }
@@ -150,91 +167,44 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
 
     }
 
-    ISwapRouter.ExactInputSingleParams public routerParamsExactInput;
-    function exactInputDexSwap (bytes memory swap) internal returns(bool) {
-        address tokenIn;
-        address tokenOut;
-        uint24 fee;
-        uint256 amountIn;
-        uint256 amountOutMinimum;
-        uint160 sqrtPriceLimitX96;
-        uint8 dex;
-
+    function exactInputSwap(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountOutMinimum
+    ) internal {
         ISwapRouter.ExactInputSingleParams memory params;
 
-        (
-            tokenIn,
-            tokenOut,
-            fee,
-            amountIn,
-            amountOutMinimum,
-            sqrtPriceLimitX96,
-            dex
-        ) = abi.decode(swap, (address, address, uint24, uint256, uint256, uint160, uint8));
+        uint256 amountIn = IERC20(tokenIn).balanceOf(address(this));
+        IERC20(tokenIn).approve(UNISWAP_ROUTER_ADDRESS, amountIn);
 
-        require(IERC20(tokenIn).balanceOf(address(this)) >= amountIn, "TOKEN_IN_BALANCE_INSUFFICIENT");
-
-        params = ISwapRouter.ExactInputSingleParams ({
-            tokenIn: tokenIn,
-            tokenOut: tokenOut,
-            fee: fee,
-            recipient: address(this),
-            deadline: block.timestamp,
-            amountIn: amountIn,
-            amountOutMinimum: amountOutMinimum,
-            sqrtPriceLimitX96: sqrtPriceLimitX96
+        params = ISwapRouter.ExactInputSingleParams({
+        tokenIn : tokenIn,
+        tokenOut : tokenOut,
+        fee : 500,
+        recipient : address(this),
+        deadline : block.timestamp,
+        amountIn : amountIn,
+        amountOutMinimum : amountOutMinimum,
+        sqrtPriceLimitX96 : 0
         });
-        routerParamsExactInput = params;
 
-        if (dex == 1) {
-            // Approve uniswap router for tokenIn
-            IERC20(tokenIn).approve(uniswapRouterAddress, amountIn + 1);
+        uint256 amountOut = uniswapRouter.exactInputSingle(params);
+        require(amountOut >= amountOutMinimum, "AMOUNT_OUT_MINIMUM_NOT_MET");
 
-            uint256 amountOut = uniswapRouter.exactInputSingle(params);
-            require(amountOut >= amountOutMinimum, "AMOUNT_OUT_MINIMUM_NOT_MET");
+        // Encode swap tokens in swap (can decode to get tokens)
+        bytes memory swap = abi.encode(tokenIn, tokenOut);
 
-            emit Swap(swap, amountIn, amountOut);
-            /*
-            try uniswapRouter.exactInputSingle(params) returns(uint256 amountOut){
-                emit Swap(swap, amountIn, amountOut);
-            } catch {
-                emit TxnReverted(swap, amountIn, dex);
-				return false;
-            }
-            */
-        }
-        else if (dex == 2) {
-			// Approve sushiswap router for tokenIn
-            IERC20(tokenIn).approve(sushiSwapRouterAddress, amountIn + 1);
-
-            uint256 amountOut = sushiSwapRouter.exactInputSingle(params);
-            require(amountOut >= amountOutMinimum, "AMOUNT_OUT_MINIMUM_NOT_MET");
-
-            emit Swap(swap, amountIn, amountOut);
-            /*
-            try sushiSwapRouter.exactInputSingle(params) returns(uint256 amountOut){
-                emit Swap(swap, amountIn, amountOut);
-            } catch {
-                emit TxnReverted(swap, amountIn, dex);
-				return false;
-            }
-            */
-        }
-        else {
-            return false;
-        }
-
-        return true;
+        emit Swap(swap, amountIn, amountOut);
     }
 
 
     //function getArbitrageOpportunity (int index)
-    function getTokenBalance(address token, address holder) public view returns(uint256) {
+    function getTokenBalance(address token, address holder) public view returns (uint256) {
         uint256 balance = IERC20(token).balanceOf(holder);
         return balance;
     }
 
-    function getETHBalance() public view returns(uint256) {
+    function getETHBalance() public view returns (uint256) {
         uint256 balance = msg.sender.balance;
         return balance;
     }
@@ -244,7 +214,7 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         return allowance;
     }
 
-    function checkContractTokenApprovalAllowance(address token, address approvedAddress) public view returns(uint256) {
+    function checkContractTokenApprovalAllowance(address token, address approvedAddress) public view returns (uint256) {
         uint256 allowance = IERC20(token).allowance(address(this), approvedAddress);
         return allowance;
     }
@@ -253,7 +223,7 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         IERC20(token).transferFrom(msg.sender, address(this), amount);
     }
 
-    function transferTokensTo(address token, address to, uint256 amount) external onlyOwner{
+    function transferTokensTo(address token, address to, uint256 amount) external onlyOwner {
         IERC20(token).transfer(to, amount);
     }
 
@@ -261,7 +231,7 @@ contract FlashArb is FlashLoanSimpleReceiverBase {
         IERC20(token).approve(spender, amount);
     }
 
-    function getCurrentBlockTime() public view returns(uint256) {
+    function getCurrentBlockTime() public view returns (uint256) {
         return block.timestamp;
     }
 
