@@ -25,8 +25,8 @@ class MongoInterface:
     def find_one_sorted(self, collection, query):
         return self.db[collection].find_one(sort=query)
 
-    def update(self, collection, query, document):
-        return self.db[collection].update_one(query, document)
+    def update(self, collection, query, document, upsert=False):
+        return self.db[collection].update_one(query, document, upsert=upsert)
 
     def update_many(self, collection, query, document):
         return self.db[collection].update_many(query, document)

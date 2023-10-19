@@ -29,19 +29,28 @@ class LendingPoolContractInterface(ContractInterfaceBase):
             self.events = self.get_event_logs("Borrow", blocks_back=100000)
             self.recent_borrowers = self.__extract_account_addresses(self.events, "Borrow")
 
-    @staticmethod
-    def __extract_account_addresses(event_logs: List[Dict], event_name: str):
+    def __extract_account_addresses(self, event_logs: List[Dict], event_name: str):
         account_addresses = []
         if event_name == "Borrow":
+            self.logger.info(f"Found {len(event_logs)} {event_name} event logs")
+            self.logger.info(f"Extracting account addresses from {event_name} event logs")
             for event_log in event_logs:
                 account_addresses.append(BorrowEvent().load(dict(event_log[event_name])))
         return account_addresses
 
     def get_user_account_data(self, user_address: str):
+        self.logger.info(f"Getting user account data for {user_address} from {self.protocol_name} contract")
+
         contract_function_handle = self.contract_handle.functions.getUserAccountData(user_address)
-        return contract_function_handle.call()
+        account_data = contract_function_handle.call()
+
+        self.logger.info(f"User account data for {user_address}: {account_data}")
+
+        return account_data
 
     def refresh_contract_data(self):
+        self.logger.info("Refreshing contract data")
+
         self.events = self.get_event_logs("Borrow", blocks_back=100000)
         self.recent_borrowers = self.__extract_account_addresses(self.events, "Borrow")
 

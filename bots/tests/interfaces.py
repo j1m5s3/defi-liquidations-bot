@@ -1,3 +1,5 @@
+import json
+
 from dotenv import dotenv_values, find_dotenv
 
 from app_logger.logger import Logger
@@ -24,6 +26,13 @@ from bots.queues.queues import DATA_MANAGER_QUEUE, LIQUIDATIONS_QUEUE
 
 config = dotenv_values(dotenv_path=find_dotenv())
 logger = Logger(section_name=__file__)
+
+flash_liquidate_contract_path = "../../sol/contracts/FlashLiquidate.json"
+with open(flash_liquidate_contract_path, "r") as f:
+    flash_liquidate_contract_json = json.load(f)
+
+flash_liquidate_contract_address = flash_liquidate_contract_json['contract_address']
+flash_liquidate_contract_abi = flash_liquidate_contract_json['abi']
 
 try:
     provider = Provider(
@@ -79,16 +88,12 @@ oracle_contract_interface = OracleContractInterface(
 
 # Custom contract interfaces #################################################
 flash_liquidate_contract_interface = FlashLiquidateContractInterface(
-
+    address=flash_liquidate_contract_address,
+    abi=flash_liquidate_contract_abi,
+    provider=provider,
 )
 
-
-
-
-
-
-
-
+#############################################################################
 searcher = Searcher(
     lending_pool_interfaces=lending_pool_interfaces,
     ui_pool_data_interfaces=ui_pool_data_interfaces,
@@ -101,5 +106,6 @@ searcher = Searcher(
 data_manager = DataManager(db_interface=db_interface, data_manager_queue=DATA_MANAGER_QUEUE)
 
 liquidator = Liquidator(
-
+    flash_liquidate_contract_interface=flash_liquidate_contract_interface,
+    liquidations_queue=LIQUIDATIONS_QUEUE
 )

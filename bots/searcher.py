@@ -86,7 +86,7 @@ class Searcher:
         :param search_type:
         :return:
         """
-
+        self.logger.info(f"Getting user account data from protocol: {protocol_name} from {search_type.name}")
         if search_type == SearchTypes.RECENT_BORROWS:
             # Refresh the borrows data
             self.lending_pool_interfaces[protocol_name].refresh_contract_data()
@@ -95,6 +95,8 @@ class Searcher:
             accounts = self.get_user_account_positions_from_mongo(protocol_name).to_records()
         else:
             raise ValueError(f"Invalid search type: {search_type}")
+
+        self.logger.info(f"Found {len(accounts)} accounts to search")
 
         user_account_data_list = []
         for account in accounts:
@@ -119,7 +121,9 @@ class Searcher:
         df = df.drop_duplicates(subset=['account_address', 'protocol_name'], keep='last')
 
         # Push the account data to the data manager
+        self.logger.info(f"Pushing {len(df)} user account data to the data manager")
         self.data_manager_queue.put(df)
+        self.logger.info(f"Pushed {len(df)} user account data to the data manager")
 
         return df
 
@@ -135,7 +139,7 @@ class Searcher:
         :param search_type:
         :return:
         """
-
+        self.logger.info(f"Getting user reserve data from protocol: {protocol_name} from {search_type.name}")
         if search_type == SearchTypes.RECENT_BORROWS:
             accounts = self.lending_pool_interfaces[protocol_name].recent_borrowers
         elif search_type == SearchTypes.FROM_RECORDS:
@@ -213,7 +217,7 @@ class Searcher:
         :param search_type: Type of search to perform
         :return: Dataframe of positions available for liquidation
         """
-
+        self.logger.info(f"Checking for liquidations for protocol: {protocol_name} from {search_type.name}")
         df_user_accounts: pandas.DataFrame = self.get_user_account_data_from_protocol(protocol_name, search_type)
         df_user_reserves: pandas.DataFrame = self.get_user_reserve_data_from_protocol(protocol_name, search_type)
 
@@ -289,6 +293,7 @@ class Searcher:
                     liquidation_params.append(liquidation_param)
 
                     # Put new entry into the queue
+                    self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
                     self.liquidations_queue.put(liquidation_param)
                     self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
                 elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:
@@ -304,6 +309,7 @@ class Searcher:
                     liquidation_params.append(liquidation_param)
 
                     # Put new entry into the queue
+                    self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
                     self.liquidations_queue.put(liquidation_param)
                     self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
 
@@ -326,7 +332,7 @@ class Searcher:
         :param positions: Dataframe of user positions to create the liquidation params from
         :return: Dataframe of containing liquidation params
         """
-
+        self.logger.info("Creating liquidation params")
         liquidation_params = positions.apply(
             self.to_liquidation_params, axis=1
         )
@@ -337,21 +343,25 @@ class Searcher:
     def live_search(
             self,
             protocol_name: str,
-            search_type: SearchTypes
-    ) -> pandas.DataFrame:
+            search_type: SearchTypes,
+            run_indefinitely: bool = True
+    ):
         """
         Live search for liquidations return parameters for liquidations
 
         :param protocol_name: Name of the protocol to search for liquidations on
         :param search_type: Type of search to perform
-        :return: Dataframe of liquidation params
+        :param run_indefinitely: Run the search indefinitely
+
         """
-        self.logger.info(f"Searching for liquidations on {protocol_name} or search type {search_type.name}")
+        run = True
+        while run:
+            if not run_indefinitely:
+                run = False
+            self.logger.info(f"Searching for liquidations on {protocol_name} from {search_type.name}")
 
-        liquidation_avail_positions_df = self.check_for_liquidations(protocol_name, search_type)
-        liquidation_params_df = self.create_liquidation_params(liquidation_avail_positions_df)
-
-        return liquidation_params_df
+            liquidation_avail_positions_df = self.check_for_liquidations(protocol_name, search_type)
+            liquidation_params_df = self.create_liquidation_params(liquidation_avail_positions_df)
 
 
 

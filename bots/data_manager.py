@@ -29,35 +29,49 @@ class DataManager:
         """
         self.logger.info("Inserting or updating account records")
 
-        for account_record in account_records.to_records():
+        for account_record in account_records.to_dict('records'):
             result = self.db_interface.update(
                 collection='user_account_positions',
                 query={
                     'protocol_name': account_record['protocol_name'],
-                    'user_address': account_record['user_address'],
+                    'account_address': account_record['account_address'],
                 },
-                document=account_record
-
+                document={"$set": account_record},
+                upsert=True
             )
 
             if result.matched_count == 0:
-                self.logger.info(f"Inserting new account record: {account_record}")
+                self.logger.info(f"Inserted new account record: {account_record}")
             elif result.modified_count == 1:
-                self.logger.info(f"Updating account record: {account_record}")
+                self.logger.info(f"Updated account record: {account_record}")
 
         return
 
-    def monitor_queue(self):
+    def monitor_queue(self, run_indefinitely: bool = True):
         """
         Monitor the data manager queue for new data to process.
+
+        :param run_indefinitely: Whether to run the queue monitor indefinitely.
         """
-        while True:
+        run = True
+        while run:
+            account_records = None
+            
+            if not run_indefinitely:
+                run = False
+
             # Block until data is received
-            account_records: pd.DataFrame = self.data_manager_queue.get(block=True)
-            self.logger.info("Received data..")
+            self.logger.info("Waiting for data..")
+            try:
+                account_records: pd.DataFrame = self.data_manager_queue.get(timeout=10)
+            except Exception as e:
+                self.logger.error(f"Error getting data from queue: {e}")
 
-            if account_records:
+            if account_records is not None and not account_records.empty:
+                self.logger.info("Received data..")
                 self.insert_or_update_account_record(account_records=account_records)
+            else:
+                self.logger.info("No data received..")
 
-            self.data_manager_queue.task_done()
+            #self.data_manager_queue.task_done()
 
