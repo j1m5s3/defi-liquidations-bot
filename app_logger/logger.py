@@ -7,7 +7,7 @@ from datetime import datetime
 class Logger:
 
     formatter = logging.Formatter(
-        '%(process)d - %(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        'PID %(process)d - %(threadName)s - %(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     log_file_path = os.path.join(
         os.path.dirname(__file__), f'{datetime.now().date().isoformat()}-logs.log'

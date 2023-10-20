@@ -179,15 +179,6 @@ class Searcher:
 
         return df
 
-    def insert_updated_account_data(self, protocol_name: str):
-        """
-        Insert updated recent borrow data into the database
-        :param protocol_name:
-        :return:
-        """
-        df = self.get_user_account_data_from_protocol(protocol_name, SearchTypes.FROM_RECORDS)
-        self.mongo_interface.insert_many('user_account_positions', df.to_dict('records'))
-
     def get_user_account_positions_from_mongo(self, protocol_name: str) -> pandas.DataFrame:
         """
         Get user account data from a lending protocol
@@ -294,7 +285,7 @@ class Searcher:
 
                     # Put new entry into the queue
                     self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
-                    self.liquidations_queue.put(liquidation_param)
+                    #self.liquidations_queue.put(liquidation_param)
                     self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
                 elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:
                     debt_to_cover = debt_asset['debt'] * collateral_close_factor
@@ -310,7 +301,7 @@ class Searcher:
 
                     # Put new entry into the queue
                     self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
-                    self.liquidations_queue.put(liquidation_param)
+                    #self.liquidations_queue.put(liquidation_param)
                     self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
 
         liquidation_params_pd = pandas.DataFrame.from_records(liquidation_params)

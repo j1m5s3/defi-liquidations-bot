@@ -1,9 +1,8 @@
 import time
-from multiprocessing import Process
+from threading import Thread
+from multiprocessing import Process, Queue
 
 from enums.enums import LendingProtocol, SearchTypes
-from interfaces import searcher, data_manager, liquidator
-
 from bots.jobs.jobs import data_manager_job, searcher_job
 
 
@@ -14,20 +13,24 @@ def test_orchestrate_bots(sets_of_bots: int = 1):
     """
 
     # Searcher
-    live_search_worker = searcher.live_search
+    live_search_worker = searcher_job
     # DataManager
-    data_manager_worker = data_manager.monitor_queue
+    data_manager_worker = data_manager_job
     # Liquidator
-    liquidator_worker = liquidator.liquidate
+    # liquidator_worker = liquidator.liquidate
+
+    dm_q = Queue()
+    l_q = Queue()
 
     for sets in range(sets_of_bots):
-        searcher.live_search(LendingProtocol.AAVE_ARBITRUM.name, SearchTypes.RECENT_BORROWS, run_indefinitely=False)
-        data_manager.monitor_queue(run_indefinitely=False)
+        # searcher.live_search(LendingProtocol.AAVE_ARBITRUM.name, SearchTypes.RECENT_BORROWS, run_indefinitely=False)
+        # data_manager.monitor_queue(run_indefinitely=False)
+
         # Start processes
-        # live_search_process_aave_rb = Process(
-        #     target=live_search_worker,
-        #     args=(LendingProtocol.AAVE_ARBITRUM.name, SearchTypes.RECENT_BORROWS)
-        # )
+        live_search_process_aave_rb = Thread(
+            target=live_search_worker,
+            args=(LendingProtocol.AAVE_ARBITRUM.name, SearchTypes.RECENT_BORROWS, dm_q, l_q)
+        )
         # live_search_process_aave_fr = Process(
         #     target=live_search_worker,
         #     args=(LendingProtocol.AAVE_ARBITRUM.name, SearchTypes.FROM_RECORDS)
@@ -40,23 +43,24 @@ def test_orchestrate_bots(sets_of_bots: int = 1):
         #     target=live_search_worker,
         #     args=(LendingProtocol.RADIANT_ARBITRUM.name, SearchTypes.FROM_RECORDS)
         # )
-        # data_manager_process = Process(target=data_manager_worker)
+        data_manager_process = Thread(target=data_manager_worker, args=(dm_q,))
         #liquidator_process = Process(target=liquidator_worker)
 
         # Start processes
-        # live_search_process_aave_rb.start()
+        live_search_process_aave_rb.start()
         #live_search_process_aave_fr.start()
         # live_search_process_radiant_rb.start()
         # live_search_process_radiant_fr.start()
-        #data_manager_process.start()
+        data_manager_process.start()
 
         #liquidator_process.start()
 
-        #live_search_process_aave_rb.join()
+        live_search_process_aave_rb.join()
         # live_search_process_aave_fr.join()
         # live_search_process_radiant_rb.join()
         # live_search_process_radiant_fr.join()
-        #data_manager_process.join()
+        data_manager_process.join()
+
     return
 
 

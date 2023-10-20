@@ -9,10 +9,11 @@ from db.schemas.position_schema import BorrowEvent
 
 from app_logger.logger import Logger
 from .contract_interface_base import ContractInterfaceBase
+from .provider.provider import Provider
 
 
 class LendingPoolContractInterface(ContractInterfaceBase):
-    def __init__(self, address: str, provider, protocol_name: str):
+    def __init__(self, address: str, provider: Provider, protocol_name: str):
         cur_dir = os.path.dirname(__file__)
         abi_file_path = os.path.join(cur_dir, f'contracts/abi/lending_protocols/{protocol_name}_LENDING_POOL.json')
         with open(abi_file_path) as abi_json:
