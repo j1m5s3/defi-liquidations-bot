@@ -5,9 +5,10 @@ from queue import Queue
 
 from app_logger.logger import Logger
 from db.mongo_db_interface import MongoInterface
+from db.redis_interface import RedisInterface
 from db.schemas.position_schema import UserAccountDataViewSchema, ReserveDataViewSchema, \
     UserAccountReservesDataViewSchema
-from enums.enums import SearchTypes
+from enums.enums import SearchTypes, QueueType
 from sol.provider.provider import Provider
 from sol.lending_pool_contract_interface import LendingPoolContractInterface
 from sol.ui_pool_data_contract_interface import UIPoolDataContractInterface
@@ -35,8 +36,7 @@ class Searcher:
             ui_pool_data_interfaces: Dict[str, UIPoolDataContractInterface],
             oracle_interface: OracleContractInterface,
             mongo_interface: MongoInterface,
-            data_manager_queue: Queue,
-            liquidations_queue: Queue
+            redis_interface: RedisInterface
     ):
         """
         Initialize the Searcher class
@@ -52,8 +52,7 @@ class Searcher:
         self.ui_pool_data_interfaces = ui_pool_data_interfaces
         self.oracle_interface = oracle_interface
         self.mongo_interface = mongo_interface
-        self.data_manager_queue = data_manager_queue
-        self.liquidations_queue = liquidations_queue
+        self.redis_interface = redis_interface
 
         logger_section_name = f"{__class__}"
         self.logger = Logger(section_name=logger_section_name)
@@ -122,7 +121,7 @@ class Searcher:
 
         # Push the account data to the data manager
         self.logger.info(f"Pushing {len(df)} user account data to the data manager")
-        self.data_manager_queue.put(df)
+        self.redis_interface.push_item(QueueType.DATA_MANAGER_QUEUE, df)
         self.logger.info(f"Pushed {len(df)} user account data to the data manager")
 
         return df
@@ -268,41 +267,44 @@ class Searcher:
         for collateral_asset in collateral_assets:
             collateral_price_usd = self.oracle_interface.get_asset_price_usd(collateral_asset['asset'])
             collateral_value_usd = collateral_asset['supplied'] * collateral_price_usd
-            for debt_asset in deb_assets:
-                debt_price_usd = self.oracle_interface.get_asset_price_usd(debt_asset['asset'])
-                debt_value_usd = debt_asset['debt'] * debt_price_usd
-                if collateral_asset['asset'] == debt_asset['asset']:
-                    debt_to_cover = debt_asset['debt'] * collateral_close_factor
-                    liquidation_param = {
-                        "collateral_asset": collateral_asset['asset'],
-                        "debt_asset": debt_asset['asset'],
-                        "user": account_address,
-                        "debt_to_cover": debt_to_cover,
-                        "receive_a_token": False,
-                        "protocol_name": protocol_name
-                    }
-                    liquidation_params.append(liquidation_param)
+            if collateral_value_usd > 0:
+                for debt_asset in deb_assets:
+                    debt_price_usd = self.oracle_interface.get_asset_price_usd(debt_asset['asset'])
+                    debt_value_usd = debt_asset['debt'] * debt_price_usd
+                    if collateral_asset['asset'] == debt_asset['asset']:
+                        debt_to_cover = debt_asset['debt'] * collateral_close_factor
+                        liquidation_param = {
+                            "collateral_asset": collateral_asset['asset'],
+                            "debt_asset": debt_asset['asset'],
+                            "user": account_address,
+                            "debt_to_cover": debt_to_cover,
+                            "receive_a_token": False,
+                            "protocol_name": protocol_name
+                        }
+                        liquidation_params.append(liquidation_param)
 
-                    # Put new entry into the queue
-                    self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
-                    #self.liquidations_queue.put(liquidation_param)
-                    self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
-                elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:
-                    debt_to_cover = debt_asset['debt'] * collateral_close_factor
-                    liquidation_param = {
-                        "collateral_asset": collateral_asset['asset'],
-                        "debt_asset": debt_asset['asset'],
-                        "user": account_address,
-                        "debt_to_cover": debt_to_cover,
-                        "receive_a_token": False,
-                        "protocol_name": protocol_name
-                    }
-                    liquidation_params.append(liquidation_param)
+                        # Put new entry into the queue
+                        self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
+                        #self.liquidations_queue.put(liquidation_param)
+                        self.redis_interface.push_item(queue_type=QueueType.LIQUIDATOR_QUEUE, value=liquidation_param)
+                        self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
+                    elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:
+                        debt_to_cover = debt_asset['debt'] * collateral_close_factor
+                        liquidation_param = {
+                            "collateral_asset": collateral_asset['asset'],
+                            "debt_asset": debt_asset['asset'],
+                            "user": account_address,
+                            "debt_to_cover": debt_to_cover,
+                            "receive_a_token": False,
+                            "protocol_name": protocol_name
+                        }
+                        liquidation_params.append(liquidation_param)
 
-                    # Put new entry into the queue
-                    self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
-                    #self.liquidations_queue.put(liquidation_param)
-                    self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
+                        # Put new entry into the queue
+                        self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
+                        #self.liquidations_queue.put(liquidation_param)
+                        self.redis_interface.push_item(queue_type=QueueType.LIQUIDATOR_QUEUE, value=liquidation_param)
+                        self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
 
         liquidation_params_pd = pandas.DataFrame.from_records(liquidation_params)
         return liquidation_params_pd

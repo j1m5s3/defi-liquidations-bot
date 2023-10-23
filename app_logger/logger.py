@@ -2,13 +2,16 @@ import logging
 import os
 
 from datetime import datetime
+from colorlog import ColoredFormatter
 
 
 class Logger:
 
-    formatter = logging.Formatter(
-        'PID %(process)d - %(threadName)s - %(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    LOG_FORMAT = 'PID %(process)d - %(threadName)s - %(asctime)s - %(log_color)s%(name)s - %(log_color)s%(levelname)s - %(message)s'
+    # formatter = logging.Formatter(
+    #     LOG_FORMAT
+    # )
+    formatter = ColoredFormatter(LOG_FORMAT)
     log_file_path = os.path.join(
         os.path.dirname(__file__), f'{datetime.now().date().isoformat()}-logs.log'
     )

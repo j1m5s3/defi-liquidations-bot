@@ -5,8 +5,8 @@ from eth_abi import encode
 def encode_path(path, path_types=None) -> str:
     """
     Encodes a path for use in a smart contract with param of type bytes
-    :param path:
-    :param path_types:
+    :param path: list of values to encode
+    :param path_types: list of types to encode values to
     :return:
     """
     if path_types is None:

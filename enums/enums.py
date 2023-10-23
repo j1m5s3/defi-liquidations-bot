@@ -46,3 +46,8 @@ class LendingPoolUIDataContract(Enum):
 class SearchTypes(Enum):
     RECENT_BORROWS = 1
     FROM_RECORDS = 2
+
+
+class QueueType(Enum):
+    DATA_MANAGER_QUEUE = 1
+    LIQUIDATOR_QUEUE = 2

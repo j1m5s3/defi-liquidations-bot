@@ -1,11 +1,13 @@
-from multiprocessing import Queue
+import json
 from dotenv import dotenv_values, find_dotenv
 
 from app_logger.logger import Logger
 from db.mongo_db_interface import MongoInterface
+from db.redis_interface import RedisInterface
 from enums.enums import LendingProtocol, SearchTypes, LendingPoolAddresses, LendingPoolUIDataContract
 from bots.searcher import Searcher
 from bots.data_manager import DataManager
+from bots.liquidator import Liquidator
 
 from sol.flash_liquidate_contract_interface import FlashLiquidateContractInterface
 from sol.lending_pool_contract_interface import LendingPoolContractInterface
@@ -21,8 +23,6 @@ config = dotenv_values(dotenv_path=find_dotenv())
 def searcher_job(
         protocol: str,
         search_type: SearchTypes,
-        dm_q: Queue,
-        l_q: Queue,
         run_indefinitely: bool = False):
     """
     Searcher job
@@ -30,8 +30,6 @@ def searcher_job(
 
     :param protocol: Name of the protocol (ex. AAVE_ARBITRUM)
     :param search_type: Type of search (ex. SearchTypes.RECENT_BORROWS)
-    :param dm_q: Data manager queue
-    :param l_q: Liquidations queue
     :param run_indefinitely: Determines if the job should run indefinitely
     """
     logger.info(f"Starting searcher job for {protocol} from {search_type}")
@@ -52,6 +50,11 @@ def searcher_job(
     db_interface = MongoInterface(
         db_name=config["MONGO_DB_NAME"],
         connection_url=config["MONGO_CONNECTION_URL"]
+    )
+
+    redis_interface = RedisInterface(
+        host=config["REDIS_HOST"],
+        port=config["REDIS_PORT"],
     )
 
     # Existing contract interfaces ################################################
@@ -93,17 +96,17 @@ def searcher_job(
         ui_pool_data_interfaces=ui_pool_data_interfaces,
         oracle_interface=oracle_contract_interface,
         mongo_interface=db_interface,
-        data_manager_queue=dm_q,
-        liquidations_queue=l_q
+        redis_interface=redis_interface
     )
     searcher.live_search(protocol_name=protocol, search_type=search_type, run_indefinitely=run_indefinitely)
 
+    logger.info(f"Searcher job for {protocol} from {search_type} finished")
 
-def data_manager_job(dm_q: Queue, run_indefinitely: bool = False):
+
+def data_manager_job(run_indefinitely: bool = False):
     """
     Data manager job
 
-    :param dm_q: Data manager queue
     :param run_indefinitely: Determines if the job should run indefinitely
     """
     logger.info("Starting data manager job")
@@ -112,5 +115,55 @@ def data_manager_job(dm_q: Queue, run_indefinitely: bool = False):
         connection_url=config["MONGO_CONNECTION_URL"]
     )
 
-    data_manager = DataManager(db_interface=db_interface, data_manager_queue=dm_q)
+    redis_interface = RedisInterface(
+        host=config["REDIS_HOST"],
+        port=config["REDIS_PORT"],
+    )
+
+    data_manager = DataManager(db_interface=db_interface, redis_interface=redis_interface)
     data_manager.monitor_queue(run_indefinitely=run_indefinitely)
+
+    logger.info("Data manager job finished")
+
+
+def liquidator_job(run_indefinitely: bool = False):
+    """
+    Liquidator job
+    :param run_indefinitely:
+    """
+    try:
+        provider = Provider(
+            wallet_address=config["WALLET_ADDRESS"],
+            wallet_private_key=config["WALLET_PRIVATE_KEY"],
+            https_url=None,
+            ws_url=config["ALCHEMY_WSS_RPC_URL_ARBITRUM"]
+        )
+        logger.info("Provider initialized")
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        logger.critical("Failed to initialize provider")
+        raise
+
+    flash_liquidate_contract_path = "../../sol/contracts/FlashLiquidate.json"
+    with open(flash_liquidate_contract_path, "r") as f:
+        flash_liquidate_contract_json = json.load(f)
+
+    flash_liquidate_contract_address = flash_liquidate_contract_json['contract_address']
+    flash_liquidate_contract_abi = flash_liquidate_contract_json['abi']
+
+    flash_liquidate_contract_interface = FlashLiquidateContractInterface(
+        address=flash_liquidate_contract_address,
+        abi=flash_liquidate_contract_abi,
+        provider=provider,
+    )
+
+    redis_interface = RedisInterface(
+        host=config["REDIS_HOST"],
+        port=config["REDIS_PORT"],
+    )
+
+    liquidator = Liquidator(
+        flash_liquidate_contract_interface=flash_liquidate_contract_interface,
+        redis_interface=redis_interface
+    )
+    liquidator.liquidate(run_indefinitely=run_indefinitely)

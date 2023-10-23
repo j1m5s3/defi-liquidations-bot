@@ -138,7 +138,7 @@ contract FlashLiquidate is FlashLoanSimpleReceiverBase {
         uint256 debtToCover,
         bool receiveAToken,
         uint8 protocol
-    ) internal onlyOwner {
+    ) internal {
 
         if (protocol == 1) {
             IERC20(debtAsset).approve(address(AAVE_POOL_CONTRACT_ADDRESS_ARBITRUM), debtToCover);

@@ -27,11 +27,11 @@ class FlashLiquidateContractInterface(ContractInterfaceBase):
         """
 
         token0 = Web3.to_checksum_address(token0)
-        amount = Web3.to_wei(loan_amount, "ether")
+        #amount = Web3.to_wei(loan_amount, "ether")
 
         contract_function_handle = self.contract_functions().flashLoanLiquidate(
             token0,
-            amount,
+            loan_amount,
             liquidate_params,
         )
 

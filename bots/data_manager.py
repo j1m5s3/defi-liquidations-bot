@@ -1,9 +1,9 @@
 import pandas as pd
-from queue import Queue
 
 from app_logger.logger import Logger
-
+from enums.enums import QueueType
 from db.mongo_db_interface import MongoInterface
+from db.redis_interface import RedisInterface
 
 
 class DataManager:
@@ -13,9 +13,9 @@ class DataManager:
     :param db_interface: The database interface that is used to interact with the database.
     :param data_manager_queue: The queue that is used to communicate with the data manager.
     """
-    def __init__(self, db_interface: MongoInterface, data_manager_queue):
+    def __init__(self, db_interface: MongoInterface, redis_interface: RedisInterface):
         self.db_interface: MongoInterface = db_interface
-        self.data_manager_queue: Queue = data_manager_queue
+        self.redis_interface: RedisInterface = redis_interface
 
         logger_section_name = f"{__class__}"
         self.logger = Logger(section_name=logger_section_name)
@@ -63,7 +63,7 @@ class DataManager:
             # Block until data is received
             self.logger.info("Waiting for data..")
             try:
-                account_records: pd.DataFrame = self.data_manager_queue.get(timeout=10)
+                account_records: pd.DataFrame = self.redis_interface.pop_item(queue_type=QueueType.DATA_MANAGER_QUEUE)
             except Exception as e:
                 self.logger.error(f"Error getting data from queue: {e}")
 
