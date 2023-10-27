@@ -70,7 +70,7 @@ class Liquidator:
                     loan_amount=debt_to_cover,
                     liquidate_params=liquidation_encoded_params
                 )
-
-                self.logger.info(f"Liquidation result: {liquidation_result}")
+                if liquidation_result:
+                    self.logger.info(f"Liquidation result: {liquidation_result}")
             else:
                 self.logger.info("No liquidation data received..")

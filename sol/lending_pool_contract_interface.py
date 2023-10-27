@@ -1,6 +1,7 @@
 import os
 import json
 from typing import Dict, Optional, List
+from retrying import retry
 from web3 import Web3
 from web3.logs import DISCARD
 
@@ -39,13 +40,17 @@ class LendingPoolContractInterface(ContractInterfaceBase):
                 account_addresses.append(BorrowEvent().load(dict(event_log[event_name])))
         return account_addresses
 
+    @retry(stop_max_attempt_number=3, wait_fixed=2000, retry_on_exception=lambda e: isinstance(e, Exception))
     def get_user_account_data(self, user_address: str):
         self.logger.info(f"Getting user account data for {user_address} from {self.protocol_name} contract")
 
         contract_function_handle = self.contract_handle.functions.getUserAccountData(user_address)
-        account_data = contract_function_handle.call()
-
-        self.logger.info(f"User account data for {user_address}: {account_data}")
+        try:
+            account_data = contract_function_handle.call()
+            self.logger.info(f"User account data for {user_address}: {account_data}")
+        except Exception as e:
+            self.logger.error(f"Failed to get user account data for {user_address}: {e}")
+            account_data = None
 
         return account_data
 

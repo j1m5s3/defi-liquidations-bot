@@ -101,20 +101,20 @@ class Searcher:
         for account in accounts:
             account_address = account['account_address']
             account_data = self.lending_pool_interfaces[protocol_name].get_user_account_data(account_address)
+            if account_data:
+                user_account_data = UserAccountDataViewSchema().load({
+                    "account_address": account_address,
+                    "total_collateral_eth": account_data[0],
+                    "total_debt_eth": account_data[1],
+                    "available_borrow_eth": account_data[2],
+                    "current_liquidation_threshold": account_data[3],
+                    "current_ltv": account_data[4],
+                    "health_factor": account_data[5],
+                    "protocol_name": protocol_name
+                })
+                self.logger.info(f"User account data - {search_type.name}: {user_account_data}")
 
-            user_account_data = UserAccountDataViewSchema().load({
-                "account_address": account_address,
-                "total_collateral_eth": account_data[0],
-                "total_debt_eth": account_data[1],
-                "available_borrow_eth": account_data[2],
-                "current_liquidation_threshold": account_data[3],
-                "current_ltv": account_data[4],
-                "health_factor": account_data[5],
-                "protocol_name": protocol_name
-            })
-            self.logger.info(f"User account data - {search_type.name}: {user_account_data}")
-
-            user_account_data_list.append(user_account_data)
+                user_account_data_list.append(user_account_data)
 
         df = pandas.DataFrame.from_records(user_account_data_list)
         df = df.drop_duplicates(subset=['account_address', 'protocol_name'], keep='last')
@@ -195,7 +195,7 @@ class Searcher:
             self,
             protocol_name: str,
             search_type: SearchTypes = SearchTypes.RECENT_BORROWS,
-            hf_threshold: float = 1.80,
+            hf_threshold: float = 1.00,
             collateral_threshold: float = 1.00,
     ) -> pandas.DataFrame:
         """
@@ -329,6 +329,10 @@ class Searcher:
         liquidation_params = positions.apply(
             self.to_liquidation_params, axis=1
         )
+        if liquidation_params.empty:
+            self.logger.info("No liquidation params created")
+            return liquidation_params
+
         liquidation_params_df = pandas.concat(liquidation_params.to_list())
 
         return liquidation_params_df
