@@ -285,7 +285,6 @@ class Searcher:
 
                         # Put new entry into the queue
                         self.logger.info(f"Adding liquidation param to queue: {liquidation_param}")
-                        #self.liquidations_queue.put(liquidation_param)
                         self.redis_interface.push_item(queue_type=QueueType.LIQUIDATOR_QUEUE, value=liquidation_param)
                         self.logger.info(f"Added liquidation param to queue: {liquidation_param}")
                     elif debt_asset['debt'] > 0 and collateral_value_usd > debt_value_usd:

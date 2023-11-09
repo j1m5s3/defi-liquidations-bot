@@ -32,6 +32,8 @@ class UIPoolDataContractInterface(ContractInterfaceBase):
             self.address_provider_address = config["AAVE_ARBITRUM_POOL_CONTRACT_ADDRESS_PROVIDER"]
         elif protocol_name == LendingProtocol.RADIANT_ARBITRUM.name:
             self.address_provider_address = config["RADIANT_ARBITRUM_POOL_CONTRACT_ADDRESS_PROVIDER"]
+        elif protocol_name == LendingProtocol.SILO_ARBITRUM.name:
+            self.address_provider_address = config["SILO_ARBITRUM_POOL_CONTRACT_ADDRESS_PROVIDER"]
         else:
             raise Exception("Unknown protocol name")
 

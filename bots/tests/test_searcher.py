@@ -14,7 +14,7 @@ def test_searcher():
     #searcher.check_for_liquidations(LendingPoolAddressesProvider.RADIANT_ARBITRUM.name)
 
     searcher.live_search(
-        LendingPoolAddressesProvider.AAVE_ARBITRUM.name,
+        LendingPoolAddressesProvider.SILO_ARBITRUM.name,
         SearchTypes.RECENT_BORROWS
     )
     # searcher.live_search(

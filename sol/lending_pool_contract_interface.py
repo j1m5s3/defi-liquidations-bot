@@ -27,9 +27,12 @@ class LendingPoolContractInterface(ContractInterfaceBase):
 
         super().__init__(address, abi, provider)
 
-        if protocol_name == LendingProtocol.AAVE_ARBITRUM.name or LendingProtocol.RADIANT_ARBITRUM.name:
-            self.events = self.get_event_logs("Borrow", blocks_back=100000)
+        if protocol_name in [LendingProtocol.AAVE_ARBITRUM.name, LendingProtocol.RADIANT_ARBITRUM.name]:
+            self.events = self.get_event_logs("Borrow", blocks_back=499999)
             self.recent_borrowers = self.__extract_account_addresses(self.events, "Borrow")
+        elif protocol_name == LendingProtocol.SILO_ARBITRUM.name:
+            self.events = self.get_event_logs("NewSilo", blocks_back=499999)
+            self.recent_borrowers = self.__extract_account_addresses(self.events, "NewSilo")
 
     def __extract_account_addresses(self, event_logs: List[Dict], event_name: str):
         account_addresses = []
@@ -38,25 +41,42 @@ class LendingPoolContractInterface(ContractInterfaceBase):
             self.logger.info(f"Extracting account addresses from {event_name} event logs")
             for event_log in event_logs:
                 account_addresses.append(BorrowEvent().load(dict(event_log[event_name])))
+        elif event_name == "NewSilo":
+            self.logger.info(f"Found {len(event_logs)} {event_name} event logs")
+            self.logger.info(f"Extracting account addresses from {event_name} event logs")
+            for event_log in event_logs:
+                account_addresses.append(event_log[event_name]["user"])
         return account_addresses
 
     @retry(stop_max_attempt_number=3, wait_fixed=2000, retry_on_exception=lambda e: isinstance(e, Exception))
     def get_user_account_data(self, user_address: str):
         self.logger.info(f"Getting user account data for {user_address} from {self.protocol_name} contract")
 
-        contract_function_handle = self.contract_handle.functions.getUserAccountData(user_address)
-        try:
-            account_data = contract_function_handle.call()
-            self.logger.info(f"User account data for {user_address}: {account_data}")
-        except Exception as e:
-            self.logger.error(f"Failed to get user account data for {user_address}: {e}")
-            account_data = None
+        if self.protocol_name in [LendingProtocol.AAVE_ARBITRUM.name, LendingProtocol.RADIANT_ARBITRUM.name]:
+            contract_function_handle = self.contract_handle.functions.getUserAccountData(user_address)
+            try:
+                account_data = contract_function_handle.call()
+                self.logger.info(f"User account data for {user_address}: {account_data}")
+            except Exception as e:
+                self.logger.error(f"Failed to get user account data for {user_address}: {e}")
+                account_data = None
+        elif self.protocol_name == LendingProtocol.SILO_ARBITRUM.name:
+            contract_function_handle = self.contract_handle.functions.silos(user_address)
+            try:
+                account_data = contract_function_handle.call()
+                self.logger.info(f"User account data for {user_address}: {account_data}")
+            except Exception as e:
+                self.logger.error(f"Failed to get user account data for {user_address}: {e}")
+                account_data = None
 
         return account_data
 
     def refresh_contract_data(self):
         self.logger.info("Refreshing contract data")
-
-        self.events = self.get_event_logs("Borrow", blocks_back=100000)
-        self.recent_borrowers = self.__extract_account_addresses(self.events, "Borrow")
+        if self.protocol_name == LendingProtocol.AAVE_ARBITRUM.name or LendingProtocol.RADIANT_ARBITRUM.name:
+            self.events = self.get_event_logs("Borrow", blocks_back=100000)
+            self.recent_borrowers = self.__extract_account_addresses(self.events, "Borrow")
+        elif self.protocol_name == LendingProtocol.SILO_ARBITRUM.name:
+            self.events = self.get_event_logs("NewSilo", blocks_back=100000)
+            self.recent_borrowers = self.__extract_account_addresses(self.events, "NewSilo")
 

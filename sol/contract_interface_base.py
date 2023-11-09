@@ -126,3 +126,63 @@ class ContractInterfaceBase:
 
     def event_handle(self):
         return self.contract_handle.events
+
+    def get_block_number_from_timestamp(
+            self,
+            target_ts: int,
+            lower_bound_ts: int,
+            upper_bound_ts: int
+    ):
+        """
+        Get the block number from the timestamp within given bounds
+
+        :param target_ts: Target timestamp to get the block number for
+        :param lower_bound_ts: Lower bound timestamp
+        :param upper_bound_ts: Upper bound timestamp
+        :return:
+        """
+        avg_block_time = 13.5
+        block_number = self.provider.w3.eth.get_block_number()
+        block = self.provider.w3.eth.get_block(block_number)
+        block_timestamp = block["timestamp"]
+        current_block_timestamp = block_timestamp
+
+        block_number = block_number
+        while block_timestamp > upper_bound_ts:
+            decrease_blocks = int((block_timestamp - target_ts) / avg_block_time)
+            if decrease_blocks < 1:
+                break
+            block_number -= decrease_blocks
+            block = self.provider.w3.eth.get_block(block_number)
+            block_timestamp = block["timestamp"]
+
+        if lower_bound_ts and block_timestamp < lower_bound_ts:
+            while block_timestamp < lower_bound_ts:
+                block_number += 1
+                block = self.provider.w3.eth.get_block(block_number)
+                block_timestamp = block["timestamp"]
+
+        if upper_bound_ts:
+            if block_timestamp >= upper_bound_ts:
+                while block_timestamp >= upper_bound_ts:
+                    block_number -= 1
+                    block = self.provider.w3.eth.get_block(block_number)
+                    block_timestamp = block["timestamp"]
+
+        if block_timestamp < upper_bound_ts:
+            while block_timestamp < upper_bound_ts:
+                block_number += 1
+                if block_number > current_block_timestamp:
+                    break
+
+                temp_block = self.provider.w3.eth.get_block(block_number)
+                temp_block_timestamp = temp_block["timestamp"]
+                if temp_block_timestamp >= upper_bound_ts:
+                    break
+                block = self.provider.w3.eth.get_block(block_number)
+                block_timestamp = block["timestamp"]
+
+        return {
+            'block_number': block_number,
+            'block_timestamp': block_timestamp,
+        }

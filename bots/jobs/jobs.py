@@ -68,6 +68,11 @@ def searcher_job(
             address=LendingPoolAddresses.RADIANT_ARBITRUM.value,
             provider=provider,
             protocol_name=LendingProtocol.RADIANT_ARBITRUM.name
+        ),
+        LendingPoolAddresses.SILO_ARBITRUM.name: LendingPoolContractInterface(
+            address=LendingPoolAddresses.SILO_ARBITRUM.value,
+            provider=provider,
+            protocol_name=LendingProtocol.SILO_ARBITRUM.name
         )
     }
 
